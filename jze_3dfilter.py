@@ -97,6 +97,37 @@ def trajectory_length(x, y, z, do_sqrt=True):
     return l 
 
 
+def acceleration_norm2(x, y, z):
+    """
+    Computes the squared norm of the second derivative of acceleration.
+
+    Parameters:
+    - x: Tensor containing x-coordinates.
+    - y: Tensor containing y-coordinates.
+    - z: Tensor containing z-coordinates.
+
+    Returns:
+    - Squared norm of the second derivative of acceleration.
+    """
+    
+    # Compute first derivatives
+    dx = x[1:(-1), :] - x[0:(-2), :] 
+    dy = y[1:(-1), :] - y[0:(-2), :] 
+    dz = z[1:(-1), :] - z[0:(-2), :] 
+    
+    # Compute second derivatives
+    ddx = dx[1:(-1), :] - dx[0:(-2), :] 
+    ddy = dy[1:(-1), :] - dy[0:(-2), :] 
+    ddz = dz[1:(-1), :] - dz[0:(-2), :]
+    
+    # Compute squared norm of the second derivative of acceleration
+    #result = torch.sqrt(ddx.pow(2) + ddy.pow(2) + ddz.pow(2))
+    result = ddx.pow(2) + ddy.pow(2) + ddz.pow(2)
+
+    result = sumsum(result)
+    return result
+
+
 def rotate3D(x, y, z, alpha, beta, gamma, p_x, p_y, p_z):
     """
     Rotates 3D coordinates around a specified axis by a given angle.
@@ -230,10 +261,8 @@ def wmse(x, tar_x, tar_w, epsilon=1e-10):
     Returns:
     - torch.Tensor: Weighted mean squared error between x and tar_x.
     """
-    # Compute the element-wise difference between the input and target tensors
-    delta = x - tar_x
-    # Compute the squared element-wise difference
-    delta2 = delta * delta
+    # Compute the squared element-wise difference between the input and target tensors
+    delta2 = (x - tar_x).pow(2)
     # Compute the sum of squared differences weighted by the target weights
     sum_wdelta2 = sumsum(delta2 * tar_w)
     # Compute the sum of target weights

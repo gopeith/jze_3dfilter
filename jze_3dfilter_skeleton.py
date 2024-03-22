@@ -106,27 +106,7 @@ def init_skeleton_lengths(x_rec, y_rec, z_rec, w_rec, structure, length0_q, use_
     return lengths_0
 
 
-def init_direction(from_x, from_y, from_z, to_x, to_y, to_z, L, use_z_rec, epsilon=1e-10):
-    d_x = to_x - from_x
-    d_y = to_y - from_y
-    if use_z_rec:
-        d_z = to_z - from_z
-    else:
-        #L_xy = torch.sqrt(d_x * d_x + d_y * d_y)
-        n = (L * (d_x + d_y)) / (to_x + to_y - from_x - from_y)
-        n2 = n * n
-        d_z2 = n2 - (d_x * d_x + d_y * d_y)
-        d_z2[d_z2 < 0] = 0
-        d_z = torch.sqrt(d_z2)         
-
-    n = torch.sqrt(d_x * d_x + d_y * d_y + d_z * d_z)
-    direction_x_0 = d_x / (n + epsilon)
-    direction_y_0 = d_y / (n + epsilon)
-    direction_z_0 = d_z / (n + epsilon)
-    return  direction_x_0, direction_y_0, direction_z_0
-
-
-def init_direction(from_x, from_y, from_z, to_x, to_y, to_z, L, use_z_rec, epsilon=1e-10):
+def init_direction(from_x, from_y, from_z, from_w, to_x, to_y, to_z, to_w, L, use_z_rec, epsilon=1e-10):
     """
     Initialize the direction vector between two points.
 
@@ -155,21 +135,37 @@ def init_direction(from_x, from_y, from_z, to_x, to_y, to_z, L, use_z_rec, epsil
         # Calculate the length along the xy-plane
         n = (L * (d_x + d_y)) / (to_x + to_y - from_x - from_y)
         n2 = n * n
-
         # Calculate the squared displacement along the z-axis
         d_z2 = n2 - (d_x * d_x + d_y * d_y)
-        d_z2[d_z2 < 0] = 0  # Ensure non-negative values
+        d_z2[d_z2 < epsilon] = epsilon  # Ensure non-negative values
         d_z = torch.sqrt(d_z2)
+
+    epsilon2 = math.sqrt(epsilon)
+    #bridge = lambda x: x - epsilon2 * (torch.sign(x - epsilon2) + torch.sign(epsilon2 - x))
+    bridge = lambda x: x + epsilon2 * 0.5 * (torch.sign(x) + 1)
+    d_x = bridge(d_x)
+    d_y = bridge(d_y)
+    d_z = bridge(d_z)
+
+    #epsilon2 = math.sqrt(epsilon)
+    bridge = lambda x: x - 2 * (torch.sign(x - epsilon) + torch.sign(epsilon - x))
+    d_x = d_x + epsilon2 * 0.5 * (torch.sign(d_x) + 1)
+    d_y = d_y + epsilon2 * 0.5 * (torch.sign(d_y) + 1)
+    d_z = d_z + epsilon2 * 0.5 * (torch.sign(d_z) + 1)
 
     # Calculate the length of the displacement vector
     n = torch.sqrt(d_x * d_x + d_y * d_y + d_z * d_z)
-
+    
     # Calculate the normalized direction vector
     direction_x_0 = d_x / (n + epsilon)
     direction_y_0 = d_y / (n + epsilon)
     direction_z_0 = d_z / (n + epsilon)
+    
+    direction_y_0 = direction_y_0.detach()
+    
+    direction_w_0 = from_w * to_w
 
-    return direction_x_0, direction_y_0, direction_z_0
+    return direction_x_0, direction_y_0, direction_z_0, direction_w_0
 
 
 def init_skeleton(x_rec, y_rec, z_rec, w_rec, structure, order, length0_q, use_z_rec=False, epsilon=1e-10):
@@ -207,7 +203,7 @@ def init_skeleton(x_rec, y_rec, z_rec, w_rec, structure, order, length0_q, use_z
     # Initialize root positions
     root_position_x_0 = x_rec[:, i_root:(i_root + 1)]
     root_position_y_0 = y_rec[:, i_root:(i_root + 1)]
-    root_position_z_0 = z_rec[:, i_root:(i_root + 1)] if use_z_rec else 0
+    root_position_z_0 = z_rec[:, i_root:(i_root + 1)] if use_z_rec else 0 * root_position_x_0
 
     # Initialize lengths of edges
     lengths_0 = init_skeleton_lengths(x_rec, y_rec, z_rec, w_rec, structure, length0_q, use_z_rec, epsilon)
@@ -219,6 +215,7 @@ def init_skeleton(x_rec, y_rec, z_rec, w_rec, structure, order, length0_q, use_z
     directions_x_0 = []
     directions_y_0 = []
     directions_z_0 = []
+    directions_w_0 = []
     pos_x = [None for _ in range(n_nodes)]
     pos_y = [None for _ in range(n_nodes)]
     pos_z = [None for _ in range(n_nodes)]
@@ -235,26 +232,30 @@ def init_skeleton(x_rec, y_rec, z_rec, w_rec, structure, order, length0_q, use_z
         from_x = pos_x[i_from]
         from_y = pos_y[i_from]
         from_z = pos_z[i_from]
+        from_w = w_rec[:, (i_from):(i_from + 1)]
         to_x = x_rec[:, (i_to):(i_to + 1)]
         to_y = y_rec[:, (i_to):(i_to + 1)]
         to_z = z_rec[:, (i_to):(i_to + 1)] if use_z_rec else 0
+        to_w = w_rec[:, (i_to):(i_to + 1)]
         L = lengths_0[0, i_length]
-        direction_x_0, direction_y_0, direction_z_0 = init_direction(from_x, from_y, from_z, to_x, to_y, to_z, L, use_z_rec, epsilon)
-        directions_x_0.append(direction_x_0)
-        directions_y_0.append(direction_y_0)
-        directions_z_0.append(direction_z_0)
+        dir_x_0, dir_y_0, dir_z_0, dir_w_0 = init_direction(from_x, from_y, from_z, from_w, to_x, to_y, to_z, to_w, L, use_z_rec, epsilon)
+        directions_x_0.append(dir_x_0)
+        directions_y_0.append(dir_y_0)
+        directions_z_0.append(dir_z_0)
+        directions_w_0.append(dir_w_0)
 
         # Update positions of the 'to' node
-        pos_x[i_to] = pos_x[i_from] + L * direction_x_0
-        pos_y[i_to] = pos_y[i_from] + L * direction_y_0
-        pos_z[i_to] = pos_z[i_from] + L * direction_z_0
+        pos_x[i_to] = pos_x[i_from] + L * dir_x_0
+        pos_y[i_to] = pos_y[i_from] + L * dir_y_0
+        pos_z[i_to] = pos_z[i_from] + L * dir_z_0
 
     # Concatenate direction vectors
     directions_x_0 = torch.cat(directions_x_0, axis=1)
     directions_y_0 = torch.cat(directions_y_0, axis=1)
     directions_z_0 = torch.cat(directions_z_0, axis=1)
+    directions_w_0 = torch.cat(directions_w_0, axis=1)
 
-    return root_position_x_0, root_position_y_0, root_position_z_0, directions_x_0, directions_y_0, directions_z_0, loglengths_0
+    return root_position_x_0, root_position_y_0, root_position_z_0, directions_x_0, directions_y_0, directions_z_0, directions_w_0, loglengths_0
 
 
 def construct_skeleton(root_positions_x, root_positions_y, root_positions_z, directions_x, directions_y, directions_z, lengths, structure, order, epsilon=1e-10):
@@ -292,7 +293,13 @@ def construct_skeleton(root_positions_x, root_positions_y, root_positions_z, dir
         direction_x = directions_x[:, i_edge:(i_edge + 1)]
         direction_y = directions_y[:, i_edge:(i_edge + 1)]
         direction_z = directions_z[:, i_edge:(i_edge + 1)]
-
+        
+        #epsilon2 = math.sqrt(epsilon)
+        #bridge = lambda x: x + epsilon2 * 0.5 * (torch.sign(x) + 1)
+        #direction_x = bridge(direction_x)
+        #direction_y = bridge(direction_y)
+        #direction_z = bridge(direction_z)
+        
         # Calculate the normalized direction vector
         norm = torch.sqrt(direction_x * direction_x + direction_y * direction_y + direction_z * direction_z) + epsilon
 
@@ -381,7 +388,7 @@ class ModelSkeleton(nn.Module):
         qz = torch.exp(self.logqz())
         z_rec = qz * z_rec
     
-        root_position_x_0, root_position_y_0, root_position_z_0, directions_x_0, directions_y_0, directions_z_0, loglengths_0 = init_skeleton(
+        root_position_x_0, root_position_y_0, root_position_z_0, directions_x_0, directions_y_0, directions_z_0, directions_w_0, loglengths_0 = init_skeleton(
             x_rec,
             y_rec,
             z_rec,
@@ -430,6 +437,182 @@ class ModelSkeleton(nn.Module):
         
         return x, y, z, e_reg
         
+        
+def wmix_shifts(x, x_w, shifts, w_mix, epsilon=1e-10):
+    """
+    Applies a weighted mixture of shifted versions of the input tensor.
+
+    Parameters:
+    - x: Input tensor.
+    - x_w: Weight for the original input tensor.
+    - shifts: List of shift values.
+    - w_mix: List of weights for each shift.
+    - epsilon: Small value added to prevent division by zero (default is 1e-10).
+
+    Returns:
+    - Tensor obtained by applying the weighted mixture of shifted versions of the input tensor.
+    """
+
+    y = 0
+    n_shifts = len(shifts)
+    sum_w = 0
+    
+    # Apply shifts with weights
+    for i_shift in range(n_shifts):
+        w = w_mix[i_shift]
+        w = w * x_w + epsilon
+        sum_w += w
+        y += w * apply_shift(x, shifts[i_shift])
+
+    # Normalize by sum of weights
+    y = y / (sum_w + epsilon)
+    
+    # Weighted sum of original input and shifted versions
+    y = x_w * x + (1 - x_w) * y
+    
+    return y
+        
+
+class ModelSkeleton_2g(nn.Module):
+    def __init__(self, structure, T, data_for_init, device="cpu"):
+        """
+        Initialize the ModelSkeleton class.
+
+        Parameters:
+        - structure (dict): Skeleton structure containing information about nodes, lengths, and edges.
+        - T (int): Number of time steps.
+        - data_for_init (dict): Data dictionary for initialization containing keys 'x_rec', 'y_rec', 'z_rec', 'w_rec', 'use_z_rec'.
+        - device (str, optional): Device to which the model should be moved (default is "cpu").
+        """
+        super().__init__()
+        self.T = T
+        self.structure = structure
+        self.device = device
+        
+        # Convert NumPy data to PyTorch and move to the specified device
+        self.data_for_init = np2torch(data_for_init, device)
+        
+        # Extract information about the skeleton structure
+        self.n_nodes = self.structure["#nodes"]
+        self.n_lengths = self.structure["#lengths"]
+        self.n_edges = len(structure["edges"])
+        
+        # Find the order of the skeleton
+        self.order = find_order(structure)
+        
+        # Define learnable parameters for the model
+        self.loglength0_q = ParametersMatrix(1, 1)
+        self.logqz = ParametersMatrix(1, 1)
+        self.loglengths = ParametersMatrix(1, self.n_lengths)
+        self.root_positions_x = ParametersMatrix(T, 1)
+        self.root_positions_y = ParametersMatrix(T, 1)
+        self.root_positions_z = ParametersMatrix(T, 1)
+        self.directions_x = ParametersMatrix(T, self.n_edges)
+        self.directions_y = ParametersMatrix(T, self.n_edges)
+        self.directions_z = ParametersMatrix(T, self.n_edges)
+
+        # Define shifts for mixing
+        shifts_delta = 1
+        self.shifts_mix = list(range(-shifts_delta, shifts_delta + 1))
+        
+        # Initialize mixing parameters
+        self.w_mix = ParametersMatrix(1, len(self.shifts_mix))
+        self.softmax = nn.Softmax(1)
+
+    def forward(self, epsilon=1e-10):
+        """
+        Forward pass of the model.
+
+        Parameters:
+        - epsilon (float, optional): Small value to avoid division by zero (default is 1e-10).
+
+        Returns:
+        - torch.Tensor: Predicted x, y, z coordinates of the skeleton.
+        - torch.Tensor: Error term for regularization.
+        """
+        # Extract data for initialization
+        x_rec, y_rec, z_rec, w_rec, use_z_rec = self.data_for_init["x_rec"], self.data_for_init["y_rec"], self.data_for_init["z_rec"], self.data_for_init["w_rec"], self.data_for_init["use_z_rec"]
+        
+        # Calculate softmax weights for mixing
+        w_mix = self.softmax(self.w_mix())
+        w_mix = torch.reshape(w_mix, (len(self.shifts_mix), ))
+        
+        # Define mixing function
+        wmix = lambda x, x_w: wmix_shifts(x, x_w, self.shifts_mix, w_mix)
+       
+        # Extract learnable parameters for initialization
+        length0_q = torch.exp(self.loglength0_q())
+        qz = torch.exp(self.logqz())
+        z_rec = qz * z_rec
+    
+        root_position_x_0, root_position_y_0, root_position_z_0, directions_x_0, directions_y_0, directions_z_0, directions_w_0, loglengths_0 = init_skeleton(
+            x_rec,
+            y_rec,
+            z_rec,
+            w_rec,
+            self.structure,
+            self.order,
+            length0_q,
+            use_z_rec,
+            epsilon,
+        )
+
+        q_param = 0.1
+        #q_param = 0.0
+        
+        i_root = self.structure["root"]
+        root_position_w_0 = w_rec[:, i_root:(i_root + 1)]
+        
+        root_position_x_0 = wmix(root_position_x_0, root_position_w_0)
+        root_position_y_0 = wmix(root_position_y_0, root_position_w_0)
+        root_position_z_0 = wmix(root_position_z_0, root_position_w_0)
+        
+        #root_position_x_0 = root_position_x_0.detach()
+        #root_position_y_0 = root_position_y_0.detach()
+        #root_position_z_0 = root_position_z_0.detach()
+        
+        root_positions_x = q_param * self.root_positions_x() + root_position_x_0
+        root_positions_y = q_param * self.root_positions_y() + root_position_y_0
+        root_positions_z = q_param * self.root_positions_z() + root_position_z_0
+        
+        loglengths = q_param * self.loglengths() + loglengths_0
+        lengths = torch.exp(loglengths)
+        
+        #directions_x_0 = directions_x_0.detach()
+        #directions_y_0 = directions_y_0.detach()
+        #directions_z_0 = directions_z_0.detach()
+
+        directions_x_0 = wmix(directions_x_0, directions_w_0)
+        directions_y_0 = wmix(directions_y_0, directions_w_0)
+        directions_z_0 = wmix(directions_z_0, directions_w_0)
+
+        directions_x = q_param * self.directions_x() + directions_x_0
+        directions_y = q_param * self.directions_y() + directions_y_0
+        directions_z = q_param * self.directions_z() + directions_z_0
+        
+        #directions_x = directions_x.detach()
+        #directions_y = directions_y.detach()
+        #directions_z = directions_z.detach()
+        #lengths = lengths.detach()
+        #root_positions_x = root_positions_x.detach()
+        #root_positions_y = root_positions_y.detach()
+        #root_positions_z = root_positions_z.detach()
+
+        #print(lengths)
+
+        directions = directions_x, directions_y, directions_z
+        root_positions = root_positions_x, root_positions_y, root_positions_z        
+        x, y, z = construct_skeleton(*root_positions, *directions, lengths, self.structure, self.order, epsilon)
+        
+        # An error for regularization
+        e_reg = 0
+        e_reg = e_reg + trajectory_length(x, y, z, do_sqrt=False) / (x.size()[0] * x.size()[1])
+        #e_reg = e_reg + acceleration_norm2(x, y, z) / (x.size()[0] * x.size()[1])
+        #n = torch.sqrt(directions_x * directions_x + directions_y * directions_y + directions_z * directions_z)
+        #e_reg = e_reg + sumsum((n - 1).pow(2))
+        
+        return x, y, z, e_reg
+
 
 def wmse_edges(pred, tar, w_tar, structure, epsilon=1e-10):
     """
